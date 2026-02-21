@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { auth } from '../firebase';
+import { auth, db, realtimeDb } from '../firebase';
 import { useRouter } from 'next/router';
 
 export default function Dashboard() {
