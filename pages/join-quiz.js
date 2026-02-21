@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { auth, realtimeDb } from '../firebase';
+import { auth, db, realtimeDb } from '../firebase';
 import { ref, onValue, update } from 'firebase/database';
 import { useRouter } from 'next/router';
 
