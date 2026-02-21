@@ -1,19 +1,18 @@
-name: Deploy Kahoot Clone a GitHub Pages
+name: Next.js Build & Deploy
 
 on:
   push:
     branches: [main]
-  workflow_dispatch:  # Puedes ejecutarlo manualmente desde la pestaña Actions
+  workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout código
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Configurar Node.js 20
+      - name: Use Node.js 20
         uses: actions/setup-node@v4
         with:
           node-version: '20'
@@ -21,13 +20,12 @@ jobs:
       - name: Instalar dependencias
         run: npm ci
 
-      - name: Build de Next.js
-        run: npm run build
+      - name: Build y Export
+        run: |
+          npm run build
+          npx next export
 
-      - name: Export a HTML estático
-        run: npx next export
-
-      - name: Deploy a rama gh-pages
+      - name: Deploy to GitHub Pages
         uses: peaceiris/actions-gh-pages@v4
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
@@ -35,4 +33,4 @@ jobs:
           publish_branch: gh-pages
           force_orphan: true
           allow_empty_commit: true
-          commit_message: "Deploy automático de Next.js desde main"
+          commit_message: "Deploy Next.js desde main"
