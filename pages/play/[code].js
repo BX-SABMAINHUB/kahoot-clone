@@ -1,6 +1,6 @@
 // src/pages/play/[code].js
 import { useState, useEffect } from 'react';
-import { auth, realtimeDb, db } from '../../firebase';
+import { auth, db, realtimeDb } from '../firebase';
 import { ref, onValue, update } from 'firebase/database';
 import { doc, onSnapshot, updateDoc, increment } from 'firebase/firestore';
 import { useRouter } from 'next/router';
