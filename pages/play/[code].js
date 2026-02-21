@@ -1,6 +1,5 @@
-// src/pages/play/[code].js
 import { useState, useEffect } from 'react';
-import { auth, db, realtimeDb } from '../firebase';
+import { auth, realtimeDb, db } from '../firebase';
 import { ref, onValue, update } from 'firebase/database';
 import { doc, onSnapshot, updateDoc, increment } from 'firebase/firestore';
 import { useRouter } from 'next/router';
@@ -18,7 +17,12 @@ export default function PlayQuiz() {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
 
-  // Cargar datos del usuario (personaje seleccionado)
+  // Timer por pregunta
+  const TIME_PER_QUESTION = 30;
+  const [timeLeft, setTimeLeft] = useState(TIME_PER_QUESTION);
+  const [timerActive, setTimerActive] = useState(false);
+
+  // Cargar personaje seleccionado
   useEffect(() => {
     if (!auth.currentUser) {
       router.push('/');
@@ -26,79 +30,99 @@ export default function PlayQuiz() {
     }
 
     const userRef = doc(db, 'users', auth.currentUser.uid);
-    const unsubscribeUser = onSnapshot(userRef, (snap) => {
+    const unsubscribe = onSnapshot(userRef, (snap) => {
       if (snap.exists()) {
         const data = snap.data();
         setPlayerCharacter(data.selectedCharacter || 'default');
       }
     });
 
-    return () => unsubscribeUser();
+    return () => unsubscribe();
   }, [router]);
 
-  // Escuchar el estado del juego en tiempo real
+  // Escuchar juego en tiempo real
   useEffect(() => {
     if (!code || !auth.currentUser) return;
 
     setLoading(true);
     const gameRef = ref(realtimeDb, `games/${code}`);
 
-    const unsubscribeGame = onValue(gameRef, (snapshot) => {
+    const unsubscribe = onValue(gameRef, (snapshot) => {
       const data = snapshot.val();
       if (!data) {
-        setError('Este quiz no existe o fue eliminado');
+        setError('Quiz no encontrado o eliminado');
         setLoading(false);
         return;
       }
 
       setGame(data);
       setCurrentQuestionIndex(data.currentQuestion ?? -1);
+      setPlayerData(data.players?.[auth.currentUser.uid] || {});
 
-      // Datos del jugador actual
-      const pData = data.players?.[auth.currentUser.uid] || {};
-      setPlayerData(pData);
+      // Reiniciar timer cuando cambia la pregunta
+      if (data.currentQuestion !== currentQuestionIndex) {
+        setTimeLeft(TIME_PER_QUESTION);
+        setTimerActive(true);
+        setSelectedOption(null);
+        setFeedback('');
+      }
 
-      // Detectar fin del juego y dar recompensa (solo si no se dio antes)
-      if (data.ended && !pData.rewardGiven) {
+      // Recompensa al finalizar (solo una vez)
+      if (data.ended && !data.players?.[auth.currentUser.uid]?.rewardGiven) {
         giveReward();
       }
 
       setLoading(false);
     });
 
-    return () => unsubscribeGame();
-  }, [code]);
+    return () => unsubscribe();
+  }, [code, currentQuestionIndex]);
+
+  // Timer countdown
+  useEffect(() => {
+    if (!timerActive || timeLeft <= 0) return;
+
+    const timer = setInterval(() => {
+      setTimeLeft((prev) => {
+        if (prev <= 1) {
+          clearInterval(timer);
+          setTimerActive(false);
+          setFeedback('¡Tiempo agotado!');
+          update(ref(realtimeDb, `games/${code}/players/${auth.currentUser.uid}`), {
+            answered: true
+          });
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+
+    return () => clearInterval(timer);
+  }, [timerActive, timeLeft, code]);
 
   const giveReward = async () => {
-    if (!auth.currentUser) return;
-
     try {
       const userRef = doc(db, 'users', auth.currentUser.uid);
-      await updateDoc(userRef, {
-        money: increment(10)
-      });
+      await updateDoc(userRef, { money: increment(10) });
 
       update(ref(realtimeDb, `games/${code}/players/${auth.currentUser.uid}`), {
         rewardGiven: true
       });
 
-      setFeedback('¡Quiz terminado! +10 monedas recibidas 🎉');
+      setFeedback('¡+10 monedas por completar el quiz! 🎉');
     } catch (err) {
-      console.error('Error al dar monedas:', err);
       setFeedback('Error al recibir recompensa');
     }
   };
 
   const handleAnswer = (optionIndex) => {
-    if (!game || currentQuestionIndex < 0 || currentQuestionIndex >= game.questions.length) return;
-    if (selectedOption !== null) return; // ya respondió
+    if (selectedOption !== null || timeLeft <= 0) return;
 
     setSelectedOption(optionIndex);
 
     const question = game.questions[currentQuestionIndex];
     const isCorrect = optionIndex === question.correct;
 
-    // Actualizar puntuación del jugador
     update(ref(realtimeDb, `games/${code}/players/${auth.currentUser.uid}`), {
       score: increment(isCorrect ? 10 : 0),
       answered: true,
@@ -108,51 +132,92 @@ export default function PlayQuiz() {
     setFeedback(isCorrect ? '¡Correcto! +10 puntos' : 'Incorrecto...');
   };
 
-  if (loading) {
-    return <div style={{ padding: '100px', textAlign: 'center', fontSize: '1.3rem' }}>Cargando quiz...</div>;
-  }
+  if (loading) return <div style={{ padding: '100px', textAlign: 'center', fontSize: '1.5rem' }}>Cargando quiz...</div>;
+  if (error) return <div style={{ padding: '100px', textAlign: 'center', color: 'red', fontSize: '1.5rem' }}>{error}</div>;
 
-  if (error) {
-    return <div style={{ padding: '100px', textAlign: 'center', color: 'red', fontSize: '1.3rem' }}>{error}</div>;
-  }
-
-  if (!game) {
-    return <div style={{ padding: '100px', textAlign: 'center' }}>Esperando datos del juego...</div>;
-  }
-
-  // Pantalla de espera
   if (currentQuestionIndex === -1) {
     return (
-      <div style={{ padding: '80px 24px', textAlign: 'center' }}>
-        <h2>Esperando a que el host inicie el quiz...</h2>
-        <p style={{ fontSize: '1.4rem', marginTop: '24px' }}>
-          Código: <strong>{code}</strong>
-        </p>
+      <div style={{ padding: '100px', textAlign: 'center', fontSize: '1.5rem' }}>
+        Esperando a que el creador inicie el quiz...
+        <br />
+        Código: <strong>{code}</strong>
       </div>
     );
   }
 
-  // Fin del quiz
   if (currentQuestionIndex >= game.questions.length || game.ended) {
+    const leaderboard = Object.entries(game.players || {})
+      .map(([uid, p]) => ({ uid, email: p.email || 'Anónimo', score: p.score || 0 }))
+      .sort((a, b) => b.score - a.score);
+
     return (
-      <div style={{ padding: '80px 24px', textAlign: 'center' }}>
-        <h1 style={{ marginBottom: '32px' }}>¡Quiz terminado!</h1>
-        <p style={{ fontSize: '1.6rem', marginBottom: '24px' }}>
+      <div style={{ padding: '60px 20px', maxWidth: '800px', margin: '0 auto', textAlign: 'center' }}>
+        <h1 style={{ marginBottom: '40px', color: '#2c3e50' }}>¡Quiz terminado!</h1>
+
+        <p style={{ fontSize: '1.6rem', marginBottom: '30px' }}>
           Tu puntuación final: <strong>{playerData?.score || 0} puntos</strong>
         </p>
-        <p style={{ color: '#4caf50', fontSize: '1.4rem', marginBottom: '40px' }}>
-          {feedback}
+
+        <p style={{ color: '#27ae60', fontSize: '1.4rem', marginBottom: '50px' }}>
+          {feedback || '¡Buen trabajo!'}
         </p>
+
+        <h2 style={{ marginBottom: '25px', fontSize: '1.8rem' }}>Clasificación</h2>
+
+        {leaderboard.length > 0 ? (
+          <div style={{ 
+            background: '#f8f9fa', 
+            borderRadius: '12px', 
+            padding: '20px', 
+            boxShadow: '0 8px 25px rgba(0,0,0,0.1)',
+            overflowX: 'auto'
+          }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+              <thead>
+                <tr style={{ background: '#e9ecef' }}>
+                  <th style={{ padding: '15px', textAlign: 'left' }}>Posición</th>
+                  <th style={{ padding: '15px', textAlign: 'left' }}>Jugador</th>
+                  <th style={{ padding: '15px', textAlign: 'right' }}>Puntos</th>
+                </tr>
+              </thead>
+              <tbody>
+                {leaderboard.map((player, index) => (
+                  <tr 
+                    key={player.uid}
+                    style={{ 
+                      borderBottom: '1px solid #dee2e6',
+                      background: player.uid === auth.currentUser.uid ? '#d4edda' : 'transparent'
+                    }}
+                  >
+                    <td style={{ padding: '15px', fontWeight: 'bold' }}>{index + 1}°</td>
+                    <td style={{ padding: '15px' }}>
+                      {player.email.split('@')[0]}{player.uid === auth.currentUser.uid && ' (tú)'}
+                    </td>
+                    <td style={{ padding: '15px', textAlign: 'right', fontWeight: 'bold' }}>
+                      {player.score}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <p>No hay jugadores aún.</p>
+        )}
+
         <button
           onClick={() => router.push('/dashboard')}
           style={{
-            padding: '16px 48px',
+            marginTop: '50px',
+            padding: '15px 40px',
             fontSize: '1.2rem',
-            background: '#2196f3',
+            background: '#3498db',
             color: 'white',
             border: 'none',
             borderRadius: '12px',
-            cursor: 'pointer'
+            cursor: 'pointer',
+            boxShadow: '0 5px 15px rgba(0,0,0,0.2)',
+            transition: 'transform 0.2s'
           }}
         >
           Volver al menú
@@ -164,59 +229,83 @@ export default function PlayQuiz() {
   const question = game.questions[currentQuestionIndex];
 
   return (
-    <div style={{ padding: '40px 24px', maxWidth: '800px', margin: '0 auto' }}>
-      {/* Mostrar personaje seleccionado */}
-      <div style={{ textAlign: 'center', marginBottom: '32px' }}>
-        <p style={{ fontSize: '1.3rem', marginBottom: '12px' }}>
+    <div style={{ padding: '40px 20px', maxWidth: '900px', margin: '0 auto' }}>
+      {/* Personaje */}
+      <div style={{ textAlign: 'center', marginBottom: '30px' }}>
+        <p style={{ fontSize: '1.4rem', marginBottom: '12px' }}>
           Jugando como: <strong>{playerCharacter}</strong>
         </p>
-        <div
-          style={{
-            width: '100px',
-            height: '100px',
-            background: '#ccc',
-            borderRadius: '50%',
-            margin: '0 auto 16px',
-            border: '4px solid #4caf50',
-            backgroundSize: 'cover',
-            backgroundPosition: 'center'
-          }}
-          // Si quieres imagen real: backgroundImage: `url(/images/${playerCharacter}.png)`
-        />
-
+        <div style={{
+          width: '100px',
+          height: '100px',
+          background: '#ccc',
+          borderRadius: '50%',
+          margin: '0 auto 20px',
+          border: '4px solid #3498db',
+          boxShadow: '0 5px 15px rgba(0,0,0,0.2)'
+        }} />
         <p style={{ fontSize: '1.2rem' }}>
           Puntuación actual: <strong>{playerData?.score || 0}</strong>
         </p>
       </div>
 
-      <h2 style={{ textAlign: 'center', marginBottom: '24px' }}>
+      {/* Timer */}
+      <div style={{ marginBottom: '30px' }}>
+        <div style={{
+          height: '12px',
+          background: '#e9ecef',
+          borderRadius: '6px',
+          overflow: 'hidden'
+        }}>
+          <div style={{
+            width: `${(timeLeft / TIME_PER_QUESTION) * 100}%`,
+            height: '100%',
+            background: timeLeft > 10 ? '#27ae60' : timeLeft > 5 ? '#f39c12' : '#e74c3c',
+            transition: 'width 1s linear'
+          }} />
+        </div>
+        <p style={{
+          textAlign: 'center',
+          marginTop: '10px',
+          fontSize: '1.3rem',
+          fontWeight: 'bold',
+          color: timeLeft <= 5 ? '#e74c3c' : '#333'
+        }}>
+          Tiempo restante: {timeLeft}s
+        </p>
+      </div>
+
+      <h2 style={{ textAlign: 'center', marginBottom: '20px' }}>
         Pregunta {currentQuestionIndex + 1} de {game.questions.length}
       </h2>
 
-      <h3 style={{ textAlign: 'center', marginBottom: '32px', fontSize: '1.5rem' }}>
+      <h3 style={{ textAlign: 'center', marginBottom: '40px', fontSize: '1.5rem' }}>
         {question.question}
       </h3>
 
-      <div style={{ display: 'grid', gap: '16px', gridTemplateColumns: '1fr 1fr' }}>
+      <div style={{
+        display: 'grid',
+        gridTemplateColumns: '1fr 1fr',
+        gap: '20px'
+      }}>
         {question.options.map((opt, index) => (
           <button
             key={index}
             onClick={() => handleAnswer(index)}
-            disabled={selectedOption !== null}
+            disabled={selectedOption !== null || timeLeft <= 0}
             style={{
               padding: '20px',
               fontSize: '1.2rem',
-              background:
-                selectedOption === index
-                  ? question.correct === index
-                    ? '#4caf50'
-                    : '#e63946'
-                  : '#f0f0f0',
-              color: selectedOption === index ? 'white' : 'black',
+              background: selectedOption === index
+                ? (question.correct === index ? '#27ae60' : '#e74c3c')
+                : '#ecf0f1',
+              color: selectedOption === index ? 'white' : '#333',
               border: 'none',
               borderRadius: '12px',
-              cursor: selectedOption === null ? 'pointer' : 'default',
-              transition: 'all 0.2s'
+              cursor: selectedOption === null && timeLeft > 0 ? 'pointer' : 'default',
+              transition: 'all 0.3s',
+              boxShadow: '0 4px 12px rgba(0,0,0,0.1)',
+              transform: selectedOption === index ? 'scale(1.05)' : 'scale(1)'
             }}
           >
             {opt}
@@ -225,15 +314,13 @@ export default function PlayQuiz() {
       </div>
 
       {feedback && (
-        <p
-          style={{
-            marginTop: '40px',
-            textAlign: 'center',
-            fontSize: '1.6rem',
-            fontWeight: 'bold',
-            color: feedback.includes('Correcto') ? '#4caf50' : '#e63946'
-          }}
-        >
+        <p style={{
+          marginTop: '40px',
+          textAlign: 'center',
+          fontSize: '1.6rem',
+          fontWeight: 'bold',
+          color: feedback.includes('Correcto') ? '#27ae60' : '#e74c3c'
+        }}>
           {feedback}
         </p>
       )}
