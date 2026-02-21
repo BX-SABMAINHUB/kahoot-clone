@@ -3,12 +3,11 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>Kahoot Clone</title>
-  <meta http-equiv="refresh" content="0; url=/pages/index.js" />
+  <title>Kahoot Clone - Cargando...</title>
+  <meta http-equiv="refresh" content="5; url=/pages/index.js" />
   <style>
     body {
       margin: 0;
-      padding: 0;
       font-family: Arial, sans-serif;
       background: linear-gradient(135deg, #667eea, #764ba2);
       color: white;
@@ -21,18 +20,33 @@
     .container {
       max-width: 600px;
       padding: 40px;
-      background: rgba(255,255,255,0.1);
+      background: rgba(255,255,255,0.15);
       border-radius: 20px;
-      box-shadow: 0 15px 35px rgba(0,0,0,0.3);
+      box-shadow: 0 15px 35px rgba(0,0,0,0.4);
     }
-    h1 { font-size: 3rem; margin-bottom: 20px; }
-    p { font-size: 1.3rem; }
+    h1 { font-size: 3.5rem; margin-bottom: 20px; }
+    p { font-size: 1.4rem; margin-bottom: 30px; }
+    .loader {
+      border: 8px solid rgba(255,255,255,0.3);
+      border-top: 8px solid white;
+      border-radius: 50%;
+      width: 80px;
+      height: 80px;
+      animation: spin 1s linear infinite;
+      margin: 0 auto 30px;
+    }
+    @keyframes spin {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
+    }
   </style>
 </head>
 <body>
   <div class="container">
+    <div class="loader"></div>
     <h1>Kahoot Clone</h1>
-    <p>Cargando... Redirigiendo a la página principal.</p>
+    <p>La app está cargando... Redirigiendo automáticamente en 5 segundos.</p>
+    <p>Si no carga, refresca la página o espera unos minutos (GitHub Pages tarda en actualizar).</p>
   </div>
 </body>
 </html>
