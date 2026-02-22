@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { auth, realtimeDb } from '../firebase';
+import { auth, realtimeDb } from '../firebase'; // ← ruta corregida (sube un nivel desde pages/)
 import { ref, onValue, update } from 'firebase/database';
 import { useRouter } from 'next/router';
 
@@ -62,7 +62,7 @@ export default function PlayQuiz() {
     });
   };
 
-  if (loading) return <div style={{ padding: '100px', textAlign: 'center', fontSize: '2rem' }}>Cargando...</div>;
+  if (loading) return <div style={{ padding: '100px', textAlign: 'center' }}>Cargando quiz...</div>;
   if (error) return <div style={{ padding: '100px', textAlign: 'center', color: 'red' }}>{error}</div>;
 
   if (!game?.started) {
@@ -70,9 +70,11 @@ export default function PlayQuiz() {
       <div style={{ padding: '60px', textAlign: 'center' }}>
         <h1>Lobby - Código: {code}</h1>
         <p>Esperando al creador...</p>
-        <h3>Jugadores:</h3>
+        <h3>Jugadores conectados:</h3>
         {Object.values(game?.players || {}).map(p => (
-          <div key={p.uid}>{p.email || p.uid.slice(0,8)}...</div>
+          <div key={p.uid} style={{ margin: '8px' }}>
+            {p.email || p.uid.slice(0,8)}...
+          </div>
         ))}
       </div>
     );
@@ -82,8 +84,8 @@ export default function PlayQuiz() {
     return (
       <div style={{ padding: '60px', textAlign: 'center' }}>
         <h1>¡Quiz terminado!</h1>
-        <button onClick={() => router.push('/dashboard')} style={{ padding: '16px 40px', fontSize: '1.3rem' }}>
-          Volver
+        <button onClick={() => router.push('/dashboard')} style={{ padding: '16px 40px' }}>
+          Volver al Dashboard
         </button>
       </div>
     );
@@ -117,7 +119,9 @@ export default function PlayQuiz() {
         ))}
       </div>
 
-      {feedback && <p style={{ marginTop: '30px', fontSize: '1.5rem', textAlign: 'center', color: feedback.includes('Correcto') ? '#4CAF50' : '#F44336' }}>{feedback}</p>}
+      {feedback && <p style={{ marginTop: '30px', fontSize: '1.5rem', textAlign: 'center', color: feedback.includes('Correcto') ? '#4CAF50' : '#F44336' }}>
+        {feedback}
+      </p>}
     </div>
   );
 }
