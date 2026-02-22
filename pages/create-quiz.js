@@ -1,7 +1,6 @@
 import { useState } from 'react';
-import { auth, db, realtimeDb } from '../firebase';
-import { collection, addDoc } from 'firebase/firestore';
-import { ref, set, update, onValue } from 'firebase/database';
+import { auth, realtimeDb } from '../firebase'; // Asegúrate de que la ruta sea correcta (../firebase o ./firebase)
+import { ref, set } from 'firebase/database';
 import QRCode from 'qrcode.react';
 import { useRouter } from 'next/router';
 
@@ -11,162 +10,172 @@ export default function CreateQuiz() {
     { question: '', options: ['', '', '', ''], correct: 0 }
   ]);
   const [code, setCode] = useState('');
-  const [gameStatus, setGameStatus] = useState('created'); // created / started / ended
+  const [error, setError] = useState('');
   const router = useRouter();
 
+  // Función para agregar una nueva pregunta
   const addQuestion = () => {
     setQuestions([...questions, { question: '', options: ['', '', '', ''], correct: 0 }]);
   };
 
-  const updateQuestion = (index, field, value, optIndex = null) => {
+  // Actualizar pregunta u opción
+  const updateQuestion = (qIndex, field, value, optIndex = null) => {
     const newQuestions = [...questions];
     if (optIndex !== null) {
-      newQuestions[index].options[optIndex] = value;
+      newQuestions[qIndex].options[optIndex] = value;
     } else if (field === 'correct') {
-      newQuestions[index].correct = parseInt(value);
+      newQuestions[qIndex].correct = Number(value);
     } else {
-      newQuestions[index][field] = value;
+      newQuestions[qIndex][field] = value;
     }
     setQuestions(newQuestions);
   };
 
+  // Generar código único para el quiz
   const generateCode = () => Math.random().toString(36).substring(2, 8).toUpperCase();
 
+  // Guardar quiz en Realtime Database
   const saveQuiz = async () => {
-    if (!auth.currentUser) return alert('Debes estar logueado');
+    if (!title.trim()) return setError('Pon un título al quiz');
+    if (!auth.currentUser) return setError('Debes iniciar sesión para crear quizzes');
 
     const newCode = generateCode();
     setCode(newCode);
+    setError('');
 
     try {
-      await addDoc(collection(db, 'quizzes'), {
-        creatorId: auth.currentUser.uid,
-        title,
-        questions,
-        code: newCode,
-        createdAt: new Date()
-      });
-
       await set(ref(realtimeDb, `games/${newCode}`), {
         title,
-        questions,
         creator: auth.currentUser.uid,
+        questions,
+        createdAt: Date.now(),
         players: {},
         currentQuestion: -1,
-        started: false,
-        ended: false
+        started: false
       });
-
-      alert(`Quiz creado! Código: ${newCode}`);
+      alert(`¡Quiz creado! Código: ${newCode}`);
     } catch (err) {
-      console.error(err);
-      alert('Error al guardar');
+      setError('Error al guardar: ' + err.message);
     }
   };
-
-  const startQuiz = () => {
-    if (!code) return alert('Primero guarda el quiz');
-    update(ref(realtimeDb, `games/${code}`), { started: true, currentQuestion: 0 });
-    setGameStatus('started');
-  };
-
-  const nextQuestion = () => {
-    const nextIndex = currentQuestion + 1;
-    if (nextIndex >= questions.length) {
-      update(ref(realtimeDb, `games/${code}`), { ended: true });
-      setGameStatus('ended');
-    } else {
-      update(ref(realtimeDb, `games/${code}`), { currentQuestion: nextIndex });
-    }
-  };
-
-  // Escuchar estado en tiempo real
-  useEffect(() => {
-    if (!code) return;
-    const gameRef = ref(realtimeDb, `games/${code}`);
-    onValue(gameRef, (snap) => {
-      const data = snap.val();
-      if (data) {
-        setGameStatus(data.started ? (data.ended ? 'ended' : 'started') : 'created');
-      }
-    });
-  }, [code]);
-
-  let currentQuestion = gameStatus === 'started' ? questions[currentQuestionIndex] : null;
 
   return (
-    <div style={{ padding: '40px', maxWidth: '800px', margin: '0 auto' }}>
-      <h1>Crear y Gestionar Quiz</h1>
+    <div style={{
+      padding: '40px 20px',
+      maxWidth: '900px',
+      margin: '0 auto',
+      background: 'linear-gradient(135deg, #f5f7fa, #c3cfe2)',
+      minHeight: '100vh'
+    }}>
+      <h1 style={{ textAlign: 'center', color: '#333', marginBottom: '40px' }}>Crear Quiz</h1>
 
-      {!code ? (
-        <>
+      {error && (
+        <p style={{ color: 'red', textAlign: 'center', marginBottom: '20px' }}>{error}</p>
+      )}
+
+      <input
+        type="text"
+        placeholder="Título del quiz"
+        value={title}
+        onChange={(e) => setTitle(e.target.value)}
+        style={{
+          width: '100%',
+          padding: '15px',
+          marginBottom: '30px',
+          borderRadius: '10px',
+          border: '1px solid #ccc',
+          fontSize: '1.2rem'
+        }}
+      />
+
+      {questions.map((q, qIndex) => (
+        <div key={qIndex} style={{
+          background: 'white',
+          padding: '20px',
+          marginBottom: '25px',
+          borderRadius: '12px',
+          boxShadow: '0 4px 15px rgba(0,0,0,0.1)'
+        }}>
           <input
-            type="text"
-            placeholder="Título del quiz"
-            value={title}
-            onChange={e => setTitle(e.target.value)}
-            style={{ width: '100%', padding: '12px', marginBottom: '20px' }}
+            placeholder={`Pregunta ${qIndex + 1}`}
+            value={q.question}
+            onChange={(e) => updateQuestion(qIndex, 'question', e.target.value)}
+            style={{
+              width: '100%',
+              padding: '12px',
+              marginBottom: '15px',
+              borderRadius: '8px',
+              border: '1px solid #ddd',
+              fontSize: '1.1rem'
+            }}
           />
 
-          {questions.map((q, i) => (
-            <div key={i} style={{ border: '1px solid #ccc', padding: '16px', marginBottom: '16px', borderRadius: '8px' }}>
+          {q.options.map((opt, oIndex) => (
+            <div key={oIndex} style={{ display: 'flex', alignItems: 'center', marginBottom: '10px' }}>
               <input
-                placeholder={`Pregunta ${i + 1}`}
-                value={q.question}
-                onChange={e => updateQuestion(i, 'question', e.target.value)}
-                style={{ width: '100%', padding: '10px', marginBottom: '12px' }}
+                placeholder={`Opción ${oIndex + 1}`}
+                value={opt}
+                onChange={(e) => updateQuestion(qIndex, null, e.target.value, oIndex)}
+                style={{
+                  flex: 1,
+                  padding: '12px',
+                  borderRadius: '8px',
+                  border: '1px solid #ddd',
+                  marginRight: '10px'
+                }}
               />
-              {q.options.map((opt, oi) => (
-                <div key={oi} style={{ display: 'flex', alignItems: 'center', marginBottom: '8px' }}>
-                  <input
-                    placeholder={`Opción ${oi + 1}`}
-                    value={opt}
-                    onChange={e => updateQuestion(i, null, e.target.value, oi)}
-                    style={{ flex: 1, padding: '10px' }}
-                  />
-                  <input
-                    type="radio"
-                    name={`correct-${i}`}
-                    checked={q.correct === oi}
-                    onChange={() => updateQuestion(i, 'correct', oi)}
-                    style={{ marginLeft: '12px' }}
-                  />
-                </div>
-              ))}
+              <input
+                type="radio"
+                name={`correct-${qIndex}`}
+                checked={q.correct === oIndex}
+                onChange={() => updateQuestion(qIndex, 'correct', oIndex)}
+                style={{ width: '20px', height: '20px' }}
+              />
             </div>
           ))}
+        </div>
+      ))}
 
-          <button onClick={addQuestion} style={{ padding: '10px 20px', marginRight: '16px', background: '#673ab7', color: 'white' }}>
-            + Pregunta
-          </button>
+      <div style={{ textAlign: 'center', margin: '30px 0' }}>
+        <button
+          onClick={addQuestion}
+          style={{
+            padding: '12px 30px',
+            marginRight: '20px',
+            background: '#9b59b6',
+            color: 'white',
+            border: 'none',
+            borderRadius: '10px',
+            cursor: 'pointer',
+            fontSize: '1.1rem'
+          }}
+        >
+          + Añadir pregunta
+        </button>
 
-          <button onClick={saveQuiz} style={{ padding: '10px 20px', background: '#4caf50', color: 'white' }}>
-            Guardar y generar código
-          </button>
-        </>
-      ) : (
-        <div style={{ textAlign: 'center' }}>
-          <h2>Código: <strong>{code}</strong></h2>
-          <div style={{ margin: '20px 0' }}>
-            <QRCode value={`${window.location.origin}/join-quiz?code=${code}`} size={200} />
+        <button
+          onClick={saveQuiz}
+          style={{
+            padding: '12px 40px',
+            background: '#27ae60',
+            color: 'white',
+            border: 'none',
+            borderRadius: '10px',
+            cursor: 'pointer',
+            fontSize: '1.1rem'
+          }}
+        >
+          Crear y generar código
+        </button>
+      </div>
+
+      {code && (
+        <div style={{ marginTop: '50px', textAlign: 'center' }}>
+          <h2 style={{ color: '#2c3e50' }}>Código del quiz: <strong>{code}</strong></h2>
+          <p style={{ margin: '20px 0', color: '#555' }}>Comparte este código o QR para que otros se unan</p>
+          <div style={{ background: 'white', padding: '20px', borderRadius: '12px', display: 'inline-block' }}>
+            <QRCode value={`http://localhost:3000/join-quiz?code=${code}`} size={200} />
           </div>
-
-          {gameStatus === 'created' && (
-            <button onClick={startQuiz} style={{ padding: '16px 40px', background: '#ff9800', color: 'white', fontSize: '1.2rem' }}>
-              Iniciar Quiz
-            </button>
-          )}
-
-          {gameStatus === 'started' && (
-            <div>
-              <h3>Pregunta actual: {currentQuestionIndex + 1} / {questions.length}</h3>
-              <button onClick={nextQuestion} style={{ padding: '16px 40px', background: '#2196f3', color: 'white', fontSize: '1.2rem' }}>
-                Siguiente pregunta
-              </button>
-            </div>
-          )}
-
-          {gameStatus === 'ended' && <h3 style={{ color: 'green' }}>Quiz finalizado</h3>}
         </div>
       )}
     </div>
