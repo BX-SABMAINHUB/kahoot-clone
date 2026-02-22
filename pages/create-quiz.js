@@ -1,6 +1,5 @@
-// pages/create-quiz.js o src/pages/create-quiz.js
 import { useState, useEffect } from 'react';
-import { auth, realtimeDb } from '../firebase';
+import { auth, realtimeDb } from '../firebase'; // si firebase.js está en la raíz → usa '../firebase'
 import { ref, set, onValue } from 'firebase/database';
 import QRCode from 'qrcode.react';
 import { useRouter } from 'next/router';
@@ -8,17 +7,21 @@ import { useRouter } from 'next/router';
 export default function CreateQuiz() {
   const router = useRouter();
   const [title, setTitle] = useState('');
-  const [questions, setQuestions] = useState([{ question: '', options: ['', '', '', ''], correct: 0 }]);
+  const [questions, setQuestions] = useState([
+    { question: '', options: ['', '', '', ''], correct: 0 }
+  ]);
   const [code, setCode] = useState('');
   const [players, setPlayers] = useState({});
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
-  // Dominio real (cámbialo por tu URL de GitHub Pages o Vercel)
+  // URL REAL de tu GitHub Pages (¡cámbiala si tu repo tiene otro nombre!)
   const BASE_URL = 'https://bx-sabmainhub.github.io/kahoot-clone';
-  // Si usas Vercel en el futuro: const BASE_URL = 'https://tu-proyecto.vercel.app';
 
   useEffect(() => {
-    if (!auth.currentUser) router.replace('/');
+    if (!auth.currentUser) {
+      router.replace('/');
+    }
   }, [router]);
 
   const addQuestion = () => {
@@ -26,12 +29,18 @@ export default function CreateQuiz() {
   };
 
   const updateQuestion = (qIndex, field, value, optIndex = null) => {
-    const updated = [...questions];
-    if (optIndex !== null) updated[qIndex].options[optIndex] = value;
-    else if (field === 'correct') updated[qIndex].correct = Number(value);
-    else updated[qIndex][field] = value;
-    setQuestions(updated);
+    const newQuestions = [...questions];
+    if (optIndex !== null) {
+      newQuestions[qIndex].options[optIndex] = value;
+    } else if (field === 'correct') {
+      newQuestions[qIndex].correct = Number(value);
+    } else {
+      newQuestions[qIndex][field] = value;
+    }
+    setQuestions(newQuestions);
   };
+
+  const generateCode = () => Math.random().toString(36).substring(2, 8).toUpperCase();
 
   const createQuiz = async () => {
     if (!title.trim()) return setError('Título obligatorio');
@@ -39,7 +48,10 @@ export default function CreateQuiz() {
       return setError('Completa todas las preguntas y opciones');
     }
 
-    const newCode = Math.random().toString(36).substring(2, 8).toUpperCase();
+    setLoading(true);
+    setError('');
+
+    const newCode = generateCode();
     setCode(newCode);
 
     try {
@@ -60,9 +72,11 @@ export default function CreateQuiz() {
         setPlayers(snap.val() || {});
       });
 
-      alert(`Quiz creado!\nCódigo: ${newCode}`);
+      alert(`Quiz creado!\nCódigo: ${newCode}\nComparte el QR o el enlace`);
     } catch (err) {
-      setError(err.message);
+      setError('Error al crear: ' + err.message);
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -70,13 +84,16 @@ export default function CreateQuiz() {
     if (!code) return;
     try {
       await update(ref(realtimeDb, `games/${code}`), { started: true, currentQuestion: 0 });
+      alert('Quiz iniciado para todos los jugadores');
     } catch (err) {
       alert('Error al iniciar: ' + err.message);
     }
   };
 
+  const joinLink = code ? `${BASE_URL}/join-quiz?code=${code}` : '';
+
   return (
-    <div style={{ padding: '40px 20px', maxWidth: '900px', margin: '0 auto', fontFamily: 'Arial, sans-serif' }}>
+    <div style={{ padding: '40px 20px', maxWidth: '900px', margin: '0 auto' }}>
       <h1 style={{ textAlign: 'center', marginBottom: '40px' }}>Crear Quiz</h1>
 
       {error && <p style={{ color: 'red', textAlign: 'center' }}>{error}</p>}
@@ -87,7 +104,7 @@ export default function CreateQuiz() {
             placeholder="Título del quiz"
             value={title}
             onChange={e => setTitle(e.target.value)}
-            style={{ width: '100%', padding: '12px', marginBottom: '30px', fontSize: '1.2rem' }}
+            style={{ width: '100%', padding: '16px', fontSize: '1.3rem', marginBottom: '30px' }}
           />
 
           {questions.map((q, i) => (
@@ -116,12 +133,16 @@ export default function CreateQuiz() {
             </div>
           ))}
 
-          <button onClick={addQuestion} style={{ marginRight: '15px', padding: '10px 20px' }}>
+          <button onClick={addQuestion} style={{ marginRight: '15px', padding: '12px 30px' }}>
             + Pregunta
           </button>
 
-          <button onClick={createQuiz} style={{ padding: '10px 30px', background: '#4CAF50', color: 'white' }}>
-            Crear Quiz
+          <button 
+            onClick={createQuiz} 
+            disabled={loading}
+            style={{ padding: '12px 40px', background: loading ? '#ccc' : '#4CAF50', color: 'white', border: 'none' }}
+          >
+            {loading ? 'Creando...' : 'Crear Quiz'}
           </button>
         </>
       ) : (
@@ -129,23 +150,25 @@ export default function CreateQuiz() {
           <h2>Código: <strong style={{ fontSize: '3rem', color: '#d32f2f' }}>{code}</strong></h2>
 
           <div style={{ margin: '30px 0' }}>
-            <QRCode value={`${BASE_URL}/join-quiz?code=${code}`} size={280} />
+            <QRCode value={joinLink} size={280} />
           </div>
 
           <p style={{ fontSize: '1.4rem', margin: '20px 0' }}>
-            Comparte este código o QR
+            <a href={joinLink} target="_blank" rel="noopener noreferrer" style={{ color: '#1976d2' }}>
+              {joinLink}
+            </a>
           </p>
 
-          <h3>Jugadores ({Object.keys(players).length}):</h3>
-          <div style={{ margin: '20px 0' }}>
+          <h3>Jugadores conectados ({Object.keys(players).length}):</h3>
+          <ul style={{ listStyle: 'none', padding: 0 }}>
             {Object.values(players).map(p => (
-              <div key={p.uid} style={{ padding: '8px', background: '#e3f2fd', margin: '6px', borderRadius: '8px' }}>
+              <li key={p.uid} style={{ margin: '8px 0' }}>
                 {p.email || p.uid.slice(0,8)}...
-              </div>
+              </li>
             ))}
-          </div>
+          </ul>
 
-          <button onClick={startQuiz} style={{ padding: '14px 60px', fontSize: '1.3rem', background: '#2196F3', color: 'white' }}>
+          <button onClick={startQuiz} style={{ marginTop: '40px', padding: '16px 60px', fontSize: '1.4rem', background: '#2196F3', color: 'white' }}>
             Empezar Quiz
           </button>
         </div>
