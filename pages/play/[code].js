@@ -10,215 +10,159 @@ export default function PlayQuiz() {
   const { code } = router.query;
 
   const [game, setGame] = useState(null);
-  const [playerData, setPlayerData] = useState(null);
+  const [player, setPlayer] = useState(null);
   const [currentQuestionIndex, setCurrentQuestionIndex] = useState(-1);
-  const [selectedOption, setSelectedOption] = useState(null);
+  const [selected, setSelected] = useState(null);
   const [feedback, setFeedback] = useState('');
-  const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
-  const [correctAnswers, setCorrectAnswers] = useState(0);
-  const [wrongAnswers, setWrongAnswers] = useState(0);
+  const [correct, setCorrect] = useState(0);
+  const [wrong, setWrong] = useState(0);
   const [showRoulette, setShowRoulette] = useState(false);
-  const [rouletteResult, setRouletteResult] = useState(null);
-  const [rouletteCooldown, setRouletteCooldown] = useState(false);
+  const [prize, setPrize] = useState(null);
+  const [cooldown, setCooldown] = useState(false);
 
-  const TIME_PER_QUESTION = 20;
-  const [timeLeft, setTimeLeft] = useState(TIME_PER_QUESTION);
-  const [timerActive, setTimerActive] = useState(false);
+  const TIME = 20;
+  const [time, setTime] = useState(TIME);
+  const [timerOn, setTimerOn] = useState(false);
 
   const isCreator = auth.currentUser && game?.creator === auth.currentUser.uid;
 
-  // Cargar datos del jugador (monedas, cooldown ruleta, etc.)
   useEffect(() => {
-    if (!auth.currentUser) {
-      router.replace('/');
-      return;
-    }
-
-    const userRef = doc(db, 'users', auth.currentUser.uid);
-    const unsubscribe = onSnapshot(userRef, (snap) => {
-      if (snap.exists()) {
-        const data = snap.data();
-        const lastSpin = data.lastRouletteSpin || 0;
-        const cooldown = 5 * 60 * 60 * 1000; // 5 horas
-        setRouletteCooldown(Date.now() - lastSpin < cooldown);
-      }
-    });
-
-    return () => unsubscribe();
-  }, [router]);
-
-  // Escuchar el juego en tiempo real
-  useEffect(() => {
-    if (!code) return;
+    if (!code || !auth.currentUser) return;
 
     setLoading(true);
-    setError('');
 
     const gameRef = ref(realtimeDb, `games/${code}`);
+    const playerRef = ref(realtimeDb, `games/${code}/players/${auth.currentUser.uid}`);
 
-    const unsubscribe = onValue(gameRef, (snap) => {
+    const unsubGame = onValue(gameRef, snap => {
       const data = snap.val();
       if (!data) {
-        setError('Quiz no encontrado o eliminado');
         setLoading(false);
         return;
       }
-
       setGame(data);
       setCurrentQuestionIndex(data.currentQuestion ?? -1);
-      setPlayerData(data.players?.[auth.currentUser?.uid] || {});
 
-      // Si cambia la pregunta → reiniciar timer
-      if (data.currentQuestion !== currentQuestionIndex) {
-        setTimeLeft(TIME_PER_QUESTION);
-        setTimerActive(true);
-        setSelectedOption(null);
+      if (data.currentQuestion !== currentQuestionIndex && data.started) {
+        setTime(TIME);
+        setTimerOn(true);
+        setSelected(null);
         setFeedback('');
       }
 
-      // Si terminó y el jugador ya respondió todo → mostrar ruleta
-      if (data.ended && data.players?.[auth.currentUser?.uid]?.answeredAll) {
+      if (data.ended && data.players?.[auth.currentUser.uid]?.answeredAll) {
         setShowRoulette(true);
       }
 
       setLoading(false);
     });
 
-    return () => unsubscribe();
+    const unsubPlayer = onValue(playerRef, snap => {
+      setPlayer(snap.val() || {});
+    });
+
+    return () => {
+      unsubGame();
+      unsubPlayer();
+    };
   }, [code, currentQuestionIndex]);
 
-  // Timer countdown
   useEffect(() => {
-    if (!timerActive || timeLeft <= 0) return;
+    if (!timerOn || time <= 0) return;
 
-    const timer = setInterval(() => {
-      setTimeLeft(prev => {
+    const t = setInterval(() => {
+      setTime(prev => {
         if (prev <= 1) {
-          clearInterval(timer);
-          setTimerActive(false);
-          setFeedback('¡Tiempo agotado!');
-          update(ref(realtimeDb, `games/${code}/players/${auth.currentUser.uid}`), {
-            answered: true
-          });
+          clearInterval(t);
+          setTimerOn(false);
+          setFeedback('¡Tiempo!');
+          update(ref(realtimeDb, `games/${code}/players/${auth.currentUser.uid}`), { answered: true });
           return 0;
         }
         return prev - 1;
       });
     }, 1000);
 
-    return () => clearInterval(timer);
-  }, [timerActive, timeLeft, code]);
+    return () => clearInterval(t);
+  }, [timerOn, time, code]);
 
-  const handleAnswer = (optionIndex) => {
-    if (selectedOption !== null || timeLeft <= 0 || !game?.started) return;
+  const answer = index => {
+    if (selected !== null || time <= 0 || !game?.started) return;
 
-    setSelectedOption(optionIndex);
+    setSelected(index);
 
-    const question = game.questions[currentQuestionIndex];
-    const isCorrect = optionIndex === question.correct;
+    const q = game.questions[currentQuestionIndex];
+    const right = index === q.correct;
 
-    if (isCorrect) setCorrectAnswers(p => p + 1);
-    else setWrongAnswers(p => p + 1);
-
-    setFeedback(isCorrect ? '¡Correcto!' : 'Incorrecto...');
+    right ? setCorrect(c => c + 1) : setWrong(w => w + 1);
+    setFeedback(right ? 'Correcto' : 'Incorrecto');
 
     update(ref(realtimeDb, `games/${code}/players/${auth.currentUser.uid}`), {
-      score: increment(isCorrect ? 10 : 0),
+      score: increment(right ? 10 : 0),
       answered: true,
-      lastAnswerCorrect: isCorrect
+      lastCorrect: right
     });
   };
 
-  const finishQuiz = async () => {
-    const baseCoins = correctAnswers * 10;
+  const endQuiz = async () => {
+    const coins = correct * 10;
     try {
       const userRef = doc(db, 'users', auth.currentUser.uid);
-      await updateDoc(userRef, { money: increment(baseCoins) });
+      await updateDoc(userRef, { money: increment(coins) });
 
       update(ref(realtimeDb, `games/${code}/players/${auth.currentUser.uid}`), {
         answeredAll: true,
-        coinsEarned: baseCoins
+        coinsEarned: coins
       });
 
-      setFeedback(`¡Terminaste! Ganaste ${baseCoins} monedas base.`);
+      setFeedback(`¡Terminaste! +${coins} monedas`);
       setShowRoulette(true);
-    } catch (err) {
-      setError('Error al dar monedas: ' + err.message);
+    } catch (e) {
+      setError(e.message);
     }
   };
 
-  const spinRoulette = async () => {
-    if (rouletteCooldown) return setFeedback('Espera 5 horas para girar de nuevo');
+  const spin = async () => {
+    if (cooldown) return setFeedback('Espera 5 horas');
 
-    const prizes = [0,0,0,0,0,0,0,0,0,0,1000,5000]; // 10 nada, 1×1000, 1×5000
-    const result = prizes[Math.floor(Math.random() * prizes.length)];
+    const prizes = Array(10).fill(0).concat(1000, 5000);
+    const win = prizes[Math.floor(Math.random() * prizes.length)];
 
-    setRouletteResult(result);
-    setRouletteCooldown(true);
+    setPrize(win);
+    setCooldown(true);
 
     try {
       const userRef = doc(db, 'users', auth.currentUser.uid);
       await updateDoc(userRef, {
         lastRouletteSpin: Date.now(),
-        money: increment(result)
+        money: increment(win)
       });
-
-      setFeedback(`¡Ruleta terminada! Ganaste ${result} monedas extra 🎉`);
-    } catch (err) {
-      setError('Error en ruleta: ' + err.message);
+      setFeedback(`¡Ganaste ${win} monedas extra!`);
+    } catch (e) {
+      setError(e.message);
     }
   };
 
   if (loading) return <div style={{ padding: '100px', textAlign: 'center', fontSize: '2rem' }}>Cargando...</div>;
-  if (error) return <div style={{ padding: '100px', textAlign: 'center', color: 'red', fontSize: '1.5rem' }}>{error}</div>;
 
-  // Lobby (si el quiz no ha empezado)
   if (!game?.started) {
     return (
-      <div style={{
-        padding: '60px 20px',
-        maxWidth: '800px',
-        margin: '0 auto',
-        textAlign: 'center',
-        background: '#f0f4f8',
-        minHeight: '100vh'
-      }}>
-        <h1 style={{ color: '#2c3e50', marginBottom: '40px' }}>Lobby - Código: <strong>{code}</strong></h1>
+      <div style={{ padding: '60px', textAlign: 'center' }}>
+        <h1>Lobby - Código: {code}</h1>
+        <p>Esperando al creador...</p>
 
-        <p style={{ fontSize: '1.3rem', marginBottom: '30px' }}>
-          Esperando a que el creador inicie el quiz...
-        </p>
-
-        <h3>Jugadores conectados ({Object.keys(game?.players || {}).length}):</h3>
-        <div style={{ margin: '20px 0' }}>
-          {Object.values(game?.players || {}).map(p => (
-            <div key={p.uid} style={{
-              background: '#fff',
-              padding: '12px',
-              margin: '8px',
-              borderRadius: '10px',
-              boxShadow: '0 2px 8px rgba(0,0,0,0.1)'
-            }}>
-              {p.email || 'Jugador anónimo'}
-              {p.uid === game?.creator && ' 👑 (Creador)'}
-            </div>
-          ))}
-        </div>
+        <h3>Jugadores ({Object.keys(game?.players || {}).length}):</h3>
+        {Object.values(game?.players || {}).map(p => (
+          <div key={p.uid} style={{ margin: '8px', padding: '8px', background: '#f0f0f0', borderRadius: '8px' }}>
+            {p.email || p.uid.slice(0,8)} {p.uid === game.creator && '👑'}
+          </div>
+        ))}
 
         {isCreator && (
           <button
             onClick={() => update(ref(realtimeDb, `games/${code}`), { started: true, currentQuestion: 0 })}
-            style={{
-              marginTop: '40px',
-              padding: '16px 60px',
-              fontSize: '1.5rem',
-              background: '#4CAF50',
-              color: 'white',
-              border: 'none',
-              borderRadius: '12px',
-              cursor: 'pointer'
-            }}
+            style={{ marginTop: '40px', padding: '16px 60px', fontSize: '1.4rem', background: '#4CAF50', color: 'white', border: 'none', borderRadius: '12px' }}
           >
             Empezar Quiz
           </button>
@@ -227,120 +171,75 @@ export default function PlayQuiz() {
     );
   }
 
-  // Pantalla de juego (después de empezar)
   if (currentQuestionIndex >= game.questions.length || game.ended) {
     return (
-      <div style={{ padding: '60px 20px', maxWidth: '900px', margin: '0 auto', textAlign: 'center' }}>
-        <h1 style={{ color: '#2c3e50', marginBottom: '40px' }}>¡Quiz terminado!</h1>
+      <div style={{ padding: '60px', textAlign: 'center' }}>
+        <h1>¡Quiz terminado!</h1>
 
-        <div style={{
-          background: '#e8f5e9',
-          padding: '30px',
-          borderRadius: '16px',
-          marginBottom: '40px'
-        }}>
-          <p style={{ fontSize: '1.8rem', marginBottom: '20px' }}>
-            Aciertos: <strong style={{ color: '#27ae60' }}>{correctAnswers}</strong>
-          </p>
-          <p style={{ fontSize: '1.8rem', marginBottom: '20px' }}>
-            Fallos: <strong style={{ color: '#e74c3c' }}>{wrongAnswers}</strong>
-          </p>
-          <p style={{ fontSize: '2.2rem', fontWeight: 'bold', color: '#2e7d32' }}>
-            Monedas ganadas: {correctAnswers * 10}
-          </p>
-        </div>
+        <p style={{ fontSize: '1.6rem', margin: '20px 0' }}>
+          Aciertos: <strong>{correct}</strong> · Fallos: <strong>{wrong}</strong>
+        </p>
+        <p style={{ fontSize: '2rem', fontWeight: 'bold', color: '#388E3C' }}>
+          Monedas: {correct * 10}
+        </p>
 
-        {showRoulette && !rouletteResult ? (
+        {showRoulette && !prize ? (
           <div style={{ margin: '40px 0' }}>
-            <h2 style={{ marginBottom: '20px' }}>Ruleta disponible</h2>
-            <p style={{ marginBottom: '20px' }}>
-              Gírala para tener opción a 1000 o 5000 monedas extra (cada 5 horas)
-            </p>
+            <h2>Ruleta disponible</h2>
             <button
-              onClick={spinRoulette}
-              style={{
-                padding: '16px 60px',
-                fontSize: '1.4rem',
-                background: '#f39c12',
-                color: 'white',
-                border: 'none',
-                borderRadius: '50px',
-                cursor: 'pointer',
-                boxShadow: '0 5px 15px rgba(0,0,0,0.2)'
-              }}
+              onClick={spin}
+              style={{ padding: '16px 60px', fontSize: '1.4rem', background: '#FF9800', color: 'white', border: 'none', borderRadius: '50px' }}
             >
-              Girar Ruleta
+              Girar
             </button>
           </div>
-        ) : rouletteResult ? (
-          <div style={{
-            background: '#fff3e0',
-            padding: '30px',
-            borderRadius: '16px',
-            margin: '40px 0',
-            fontSize: '1.6rem'
-          }}>
-            <h2 style={{ color: '#e65100' }}>¡Ruleta terminada!</h2>
-            <p style={{ fontSize: '2.5rem', fontWeight: 'bold', margin: '20px 0' }}>
-              {rouletteResult === 0 ? '¡Nada! 😅' : `¡Ganaste ${rouletteResult} monedas extra! 🎉`}
+        ) : prize !== null ? (
+          <div style={{ margin: '40px 0', fontSize: '1.8rem' }}>
+            <h2>¡Ruleta!</h2>
+            <p style={{ fontSize: '2.5rem', fontWeight: 'bold' }}>
+              {prize === 0 ? 'Nada 😅' : `¡+${prize} monedas! 🎉`}
             </p>
           </div>
         ) : null}
 
         <button
           onClick={() => router.push('/dashboard')}
-          style={{
-            padding: '16px 50px',
-            fontSize: '1.3rem',
-            background: '#3498db',
-            color: 'white',
-            border: 'none',
-            borderRadius: '12px',
-            cursor: 'pointer',
-            marginTop: '40px'
-          }}
+          style={{ padding: '14px 50px', fontSize: '1.2rem', background: '#2196F3', color: 'white', border: 'none', borderRadius: '12px' }}
         >
-          Volver al Dashboard
+          Volver
         </button>
       </div>
     );
   }
 
-  const question = game.questions[currentQuestionIndex];
+  const q = game.questions[currentQuestionIndex];
 
   return (
     <div style={{ padding: '40px 20px', maxWidth: '900px', margin: '0 auto' }}>
-      <h2 style={{ textAlign: 'center', marginBottom: '30px', color: '#2c3e50' }}>
-        Pregunta {currentQuestionIndex + 1} de {game.questions.length}
+      <h2 style={{ textAlign: 'center', marginBottom: '30px' }}>
+        Pregunta {currentQuestionIndex + 1}/{game.questions.length}
       </h2>
 
-      <h3 style={{ textAlign: 'center', marginBottom: '40px', fontSize: '1.6rem' }}>
-        {question.question}
+      <h3 style={{ textAlign: 'center', marginBottom: '40px', fontSize: '1.5rem' }}>
+        {q.question}
       </h3>
 
-      <div style={{
-        display: 'grid',
-        gridTemplateColumns: '1fr 1fr',
-        gap: '20px'
-      }}>
-        {question.options.map((opt, index) => (
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
+        {q.options.map((opt, i) => (
           <button
-            key={index}
-            onClick={() => handleAnswer(index)}
-            disabled={selectedOption !== null || timeLeft <= 0}
+            key={i}
+            onClick={() => handleAnswer(i)}
+            disabled={selected !== null || time <= 0}
             style={{
               padding: '25px',
               fontSize: '1.3rem',
-              background: selectedOption === index
-                ? (question.correct === index ? '#27ae60' : '#e74c3c')
-                : '#ecf0f1',
-              color: selectedOption === index ? 'white' : '#333',
+              background: selected === i
+                ? (q.correct === i ? '#66BB6A' : '#EF5350')
+                : '#E0E0E0',
+              color: selected === i ? 'white' : '#333',
               border: 'none',
-              borderRadius: '15px',
-              cursor: selectedOption === null && timeLeft > 0 ? 'pointer' : 'default',
-              transition: 'all 0.3s',
-              boxShadow: '0 4px 12px rgba(0,0,0,0.1)',
-              transform: selectedOption === index ? 'scale(1.08)' : 'scale(1)'
+              borderRadius: '12px',
+              cursor: selected === null && time > 0 ? 'pointer' : 'default'
             }}
           >
             {opt}
@@ -348,26 +247,15 @@ export default function PlayQuiz() {
         ))}
       </div>
 
-      <div style={{ marginTop: '40px', textAlign: 'center' }}>
-        <p style={{
-          fontSize: '1.5rem',
-          fontWeight: 'bold',
-          color: timeLeft <= 5 ? '#e74c3c' : '#333'
-        }}>
-          Tiempo restante: {timeLeft}s
-        </p>
+      <p style={{ textAlign: 'center', marginTop: '40px', fontSize: '1.6rem', fontWeight: 'bold' }}>
+        Tiempo: {time}s
+      </p>
 
-        {feedback && (
-          <p style={{
-            marginTop: '20px',
-            fontSize: '1.8rem',
-            fontWeight: 'bold',
-            color: feedback.includes('Correcto') ? '#27ae60' : '#e74c3c'
-          }}>
-            {feedback}
-          </p>
-        )}
-      </div>
+      {feedback && (
+        <p style={{ textAlign: 'center', marginTop: '20px', fontSize: '1.8rem', color: feedback.includes('Correcto') ? '#4CAF50' : '#F44336' }}>
+          {feedback}
+        </p>
+      )}
     </div>
   );
 }
