@@ -14,32 +14,20 @@ export default function JoinQuiz() {
     if (router.query.code) {
       setCode(router.query.code.toUpperCase());
     }
-  }, [router.query]);
+  }, [router.query.code]);
 
-  const joinGame = () => {
+  const join = () => {
     const gameCode = code.trim().toUpperCase();
-    if (!gameCode) return setError('Ingresa un código');
+    if (!gameCode) return setError('Código obligatorio');
 
     setLoading(true);
     setError('');
 
-    const gameRef = ref(realtimeDb, `games/${gameCode}`);
-
-    onValue(gameRef, (snap) => {
+    onValue(ref(realtimeDb, `games/${gameCode}`), (snap) => {
       const game = snap.val();
-      if (!game) {
-        setError('Código inválido');
-        setLoading(false);
-        return;
-      }
+      if (!game) return setError('Código inválido'), setLoading(false);
+      if (game.started) return setError('El quiz ya empezó'), setLoading(false);
 
-      if (game.started) {
-        setError('El quiz ya comenzó');
-        setLoading(false);
-        return;
-      }
-
-      // Unirse
       update(ref(realtimeDb, `games/${gameCode}/players/${auth.currentUser.uid}`), {
         uid: auth.currentUser.uid,
         email: auth.currentUser.email,
@@ -47,7 +35,6 @@ export default function JoinQuiz() {
         answered: false,
         joinedAt: Date.now()
       }).then(() => {
-        // Redirigir al juego
         router.push(`/play/${gameCode}`);
       }).catch(err => {
         setError('Error al unirse: ' + err.message);
@@ -57,27 +44,36 @@ export default function JoinQuiz() {
   };
 
   return (
-    <div style={{ padding: '60px 20px', maxWidth: '500px', margin: '0 auto', textAlign: 'center' }}>
-      <h1>Unirse a Quiz</h1>
+    <div style={{ padding: '80px 20px', maxWidth: '500px', margin: '0 auto', textAlign: 'center' }}>
+      <h1>Unirse a un Quiz</h1>
 
       <input
         type="text"
-        placeholder="Código (6 caracteres)"
+        placeholder="Código (6 letras/números)"
         value={code}
         onChange={e => setCode(e.target.value.toUpperCase())}
         maxLength={6}
         style={{ width: '100%', padding: '16px', fontSize: '1.6rem', textAlign: 'center', marginBottom: '30px' }}
       />
 
-      <button 
-        onClick={joinGame}
+      <button
+        onClick={join}
         disabled={loading || !code.trim()}
-        style={{ padding: '16px 60px', fontSize: '1.4rem', background: loading ? '#aaa' : '#4CAF50', color: 'white' }}
+        style={{
+          width: '100%',
+          padding: '16px',
+          fontSize: '1.4rem',
+          background: loading ? '#aaa' : '#4CAF50',
+          color: 'white',
+          border: 'none',
+          borderRadius: '10px',
+          cursor: loading ? 'not-allowed' : 'pointer'
+        }}
       >
-        {loading ? 'Uniéndose...' : 'Unirse'}
+        {loading ? 'Uniéndose...' : 'Unirse al Quiz'}
       </button>
 
-      {error && <p style={{ color: 'red', marginTop: '20px' }}>{error}</p>}
+      {error && <p style={{ color: 'red', marginTop: '20px', fontWeight: 'bold' }}>{error}</p>}
     </div>
   );
 }
