@@ -1,4 +1,4 @@
-// pages/create-quiz.js
+// pages/create-quiz.js o src/pages/create-quiz.js
 import { useState, useEffect } from 'react';
 import { auth, realtimeDb } from '../firebase';
 import { ref, set, onValue } from 'firebase/database';
@@ -8,23 +8,17 @@ import { useRouter } from 'next/router';
 export default function CreateQuiz() {
   const router = useRouter();
   const [title, setTitle] = useState('');
-  const [questions, setQuestions] = useState([
-    { question: '', options: ['', '', '', ''], correct: 0 }
-  ]);
+  const [questions, setQuestions] = useState([{ question: '', options: ['', '', '', ''], correct: 0 }]);
   const [code, setCode] = useState('');
   const [players, setPlayers] = useState({});
-  const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
-  // URL pública (cámbiala por tu dominio real cuando despliegues)
-  const BASE_URL = typeof window !== 'undefined' 
-    ? window.location.origin 
-    : 'https://bx-sabmainhub.github.io/kahoot-clone';
+  // Dominio real (cámbialo por tu URL de GitHub Pages o Vercel)
+  const BASE_URL = 'https://bx-sabmainhub.github.io/kahoot-clone';
+  // Si usas Vercel en el futuro: const BASE_URL = 'https://tu-proyecto.vercel.app';
 
   useEffect(() => {
-    if (!auth.currentUser) {
-      router.replace('/');
-    }
+    if (!auth.currentUser) router.replace('/');
   }, [router]);
 
   const addQuestion = () => {
@@ -32,29 +26,20 @@ export default function CreateQuiz() {
   };
 
   const updateQuestion = (qIndex, field, value, optIndex = null) => {
-    const newQuestions = [...questions];
-    if (optIndex !== null) {
-      newQuestions[qIndex].options[optIndex] = value;
-    } else if (field === 'correct') {
-      newQuestions[qIndex].correct = Number(value);
-    } else {
-      newQuestions[qIndex][field] = value;
-    }
-    setQuestions(newQuestions);
+    const updated = [...questions];
+    if (optIndex !== null) updated[qIndex].options[optIndex] = value;
+    else if (field === 'correct') updated[qIndex].correct = Number(value);
+    else updated[qIndex][field] = value;
+    setQuestions(updated);
   };
 
-  const generateCode = () => Math.random().toString(36).substring(2, 8).toUpperCase();
-
   const createQuiz = async () => {
-    if (!title.trim()) return setError('Pon un título');
+    if (!title.trim()) return setError('Título obligatorio');
     if (questions.some(q => !q.question.trim() || q.options.some(o => !o.trim()))) {
       return setError('Completa todas las preguntas y opciones');
     }
 
-    setLoading(true);
-    setError('');
-
-    const newCode = generateCode();
+    const newCode = Math.random().toString(36).substring(2, 8).toUpperCase();
     setCode(newCode);
 
     try {
@@ -71,35 +56,27 @@ export default function CreateQuiz() {
       });
 
       // Escuchar jugadores en tiempo real
-      const playersRef = ref(realtimeDb, `games/${newCode}/players`);
-      onValue(playersRef, (snap) => {
+      onValue(ref(realtimeDb, `games/${newCode}/players`), (snap) => {
         setPlayers(snap.val() || {});
       });
 
-      alert(`Quiz creado! Código: ${newCode}`);
+      alert(`Quiz creado!\nCódigo: ${newCode}`);
     } catch (err) {
-      setError('Error: ' + err.message);
-    } finally {
-      setLoading(false);
+      setError(err.message);
     }
   };
 
   const startQuiz = async () => {
     if (!code) return;
-
     try {
-      await update(ref(realtimeDb, `games/${code}`), {
-        started: true,
-        currentQuestion: 0
-      });
-      alert('¡Quiz iniciado!');
+      await update(ref(realtimeDb, `games/${code}`), { started: true, currentQuestion: 0 });
     } catch (err) {
       alert('Error al iniciar: ' + err.message);
     }
   };
 
   return (
-    <div style={{ padding: '40px 20px', maxWidth: '1000px', margin: '0 auto' }}>
+    <div style={{ padding: '40px 20px', maxWidth: '900px', margin: '0 auto', fontFamily: 'Arial, sans-serif' }}>
       <h1 style={{ textAlign: 'center', marginBottom: '40px' }}>Crear Quiz</h1>
 
       {error && <p style={{ color: 'red', textAlign: 'center' }}>{error}</p>}
@@ -107,15 +84,14 @@ export default function CreateQuiz() {
       {!code ? (
         <>
           <input
-            type="text"
             placeholder="Título del quiz"
             value={title}
             onChange={e => setTitle(e.target.value)}
-            style={{ width: '100%', padding: '15px', marginBottom: '30px', fontSize: '1.2rem' }}
+            style={{ width: '100%', padding: '12px', marginBottom: '30px', fontSize: '1.2rem' }}
           />
 
           {questions.map((q, i) => (
-            <div key={i} style={{ marginBottom: '30px', padding: '20px', background: '#f9f9f9', borderRadius: '12px' }}>
+            <div key={i} style={{ marginBottom: '30px', padding: '20px', background: '#f8f9fa', borderRadius: '12px' }}>
               <input
                 placeholder={`Pregunta ${i+1}`}
                 value={q.question}
@@ -123,7 +99,7 @@ export default function CreateQuiz() {
                 style={{ width: '100%', padding: '12px', marginBottom: '15px' }}
               />
               {q.options.map((opt, oi) => (
-                <div key={oi} style={{ display: 'flex', marginBottom: '10px' }}>
+                <div key={oi} style={{ display: 'flex', alignItems: 'center', marginBottom: '10px' }}>
                   <input
                     placeholder={`Opción ${oi+1}`}
                     value={opt}
@@ -140,52 +116,36 @@ export default function CreateQuiz() {
             </div>
           ))}
 
-          <button onClick={addQuestion} style={{ marginRight: '20px', padding: '12px 30px' }}>
+          <button onClick={addQuestion} style={{ marginRight: '15px', padding: '10px 20px' }}>
             + Pregunta
           </button>
 
-          <button 
-            onClick={createQuiz} 
-            disabled={loading}
-            style={{ padding: '12px 40px', background: loading ? '#ccc' : '#4CAF50', color: 'white' }}
-          >
-            {loading ? 'Creando...' : 'Crear Quiz'}
+          <button onClick={createQuiz} style={{ padding: '10px 30px', background: '#4CAF50', color: 'white' }}>
+            Crear Quiz
           </button>
         </>
       ) : (
         <div style={{ textAlign: 'center' }}>
-          <h2>Código del quiz: <strong style={{ fontSize: '3rem' }}>{code}</strong></h2>
-          
+          <h2>Código: <strong style={{ fontSize: '3rem', color: '#d32f2f' }}>{code}</strong></h2>
+
           <div style={{ margin: '30px 0' }}>
-            <QRCode 
-              value={`${BASE_URL}/join-quiz?code=${code}`} 
-              size={280} 
-            />
+            <QRCode value={`${BASE_URL}/join-quiz?code=${code}`} size={280} />
           </div>
 
-          <p style={{ fontSize: '1.3rem', marginBottom: '20px' }}>
-            Comparte este código o QR con tus jugadores
+          <p style={{ fontSize: '1.4rem', margin: '20px 0' }}>
+            Comparte este código o QR
           </p>
 
-          <h3>Jugadores conectados ({Object.keys(players).length})</h3>
-          <ul style={{ listStyle: 'none', padding: 0 }}>
+          <h3>Jugadores ({Object.keys(players).length}):</h3>
+          <div style={{ margin: '20px 0' }}>
             {Object.values(players).map(p => (
-              <li key={p.uid} style={{ fontSize: '1.2rem', margin: '8px 0' }}>
-                {p.email || p.uid.substring(0,8)}...
-              </li>
+              <div key={p.uid} style={{ padding: '8px', background: '#e3f2fd', margin: '6px', borderRadius: '8px' }}>
+                {p.email || p.uid.slice(0,8)}...
+              </div>
             ))}
-          </ul>
+          </div>
 
-          <button 
-            onClick={startQuiz}
-            style={{ 
-              marginTop: '40px', 
-              padding: '16px 60px', 
-              fontSize: '1.4rem', 
-              background: '#2196F3', 
-              color: 'white' 
-            }}
-          >
+          <button onClick={startQuiz} style={{ padding: '14px 60px', fontSize: '1.3rem', background: '#2196F3', color: 'white' }}>
             Empezar Quiz
           </button>
         </div>
