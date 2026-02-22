@@ -1,322 +1,243 @@
 import { useState, useEffect } from 'react';
-import { auth, realtimeDb, db } from '../firebase';  // Ruta corregida: desde pages/ a raíz
-import { ref, onValue, update } from 'firebase/database';
-import { doc, onSnapshot, updateDoc, increment } from 'firebase/firestore';
 import { useRouter } from 'next/router';
+import { auth, realtimeDb } from '../firebase'; // Ajusta la ruta si es necesario
+import { ref, set } from 'firebase/database';
+import QRCode from 'qrcode.react';
 
-export default function PlayQuiz() {
+export default function CreateQuiz() {
   const router = useRouter();
-  const { code } = router.query;
-
-  const [game, setGame] = useState(null);
-  const [playerData, setPlayerData] = useState(null);
-  const [playerCharacter, setPlayerCharacter] = useState('default');
-  const [currentQuestionIndex, setCurrentQuestionIndex] = useState(-1);
-  const [selectedOption, setSelectedOption] = useState(null);
-  const [feedback, setFeedback] = useState('');
+  const [title, setTitle] = useState('');
+  const [questions, setQuestions] = useState([
+    { question: '', options: ['', '', '', ''], correct: 0 }
+  ]);
+  const [code, setCode] = useState('');
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
-  const [loading, setLoading] = useState(true);
 
-  // Timer por pregunta
-  const TIME_PER_QUESTION = 30;
-  const [timeLeft, setTimeLeft] = useState(TIME_PER_QUESTION);
-  const [timerActive, setTimerActive] = useState(false);
-
-  // Cargar personaje seleccionado
+  // Proteger la página: solo usuarios logueados
   useEffect(() => {
-    if (!auth.currentUser) {
-      router.push('/');
-      return;
-    }
-
-    const userRef = doc(db, 'users', auth.currentUser.uid);
-    const unsubscribe = onSnapshot(userRef, (snap) => {
-      if (snap.exists()) {
-        const data = snap.data();
-        setPlayerCharacter(data.selectedCharacter || 'default');
+    const unsubscribe = auth.onAuthStateChanged((user) => {
+      if (!user) {
+        router.replace('/');
       }
     });
-
     return () => unsubscribe();
   }, [router]);
 
-  // Escuchar juego en tiempo real
-  useEffect(() => {
-    if (!code || !auth.currentUser) return;
+  const addQuestion = () => {
+    setQuestions([...questions, { question: '', options: ['', '', '', ''], correct: 0 }]);
+  };
+
+  const updateQuestion = (qIndex, field, value, optIndex = null) => {
+    const newQuestions = [...questions];
+    if (optIndex !== null) {
+      newQuestions[qIndex].options[optIndex] = value;
+    } else if (field === 'correct') {
+      newQuestions[qIndex].correct = Number(value);
+    } else {
+      newQuestions[qIndex][field] = value;
+    }
+    setQuestions(newQuestions);
+  };
+
+  const generateCode = () => Math.random().toString(36).substring(2, 8).toUpperCase();
+
+  const saveQuiz = async () => {
+    if (!title.trim()) {
+      setError('El título es obligatorio');
+      return;
+    }
+
+    if (questions.some(q => !q.question.trim() || q.options.some(opt => !opt.trim()))) {
+      setError('Todas las preguntas y opciones deben estar completas');
+      return;
+    }
 
     setLoading(true);
-    const gameRef = ref(realtimeDb, `games/${code}`);
+    setError('');
+    setCode('');
 
-    const unsubscribe = onValue(gameRef, (snapshot) => {
-      const data = snapshot.val();
-      if (!data) {
-        setError('Quiz no encontrado o eliminado');
-        setLoading(false);
-        return;
-      }
+    const newCode = generateCode();
 
-      setGame(data);
-      setCurrentQuestionIndex(data.currentQuestion ?? -1);
-      setPlayerData(data.players?.[auth.currentUser.uid] || {});
-
-      // Reiniciar timer cuando cambia la pregunta
-      if (data.currentQuestion !== currentQuestionIndex) {
-        setTimeLeft(TIME_PER_QUESTION);
-        setTimerActive(true);
-        setSelectedOption(null);
-        setFeedback('');
-      }
-
-      // Recompensa única al terminar
-      if (data.ended && !data.players?.[auth.currentUser.uid]?.rewardGiven) {
-        giveReward();
-      }
-
-      setLoading(false);
-    });
-
-    return () => unsubscribe();
-  }, [code, currentQuestionIndex]);
-
-  // Timer countdown
-  useEffect(() => {
-    if (!timerActive || timeLeft <= 0) return;
-
-    const timer = setInterval(() => {
-      setTimeLeft((prev) => {
-        if (prev <= 1) {
-          clearInterval(timer);
-          setTimerActive(false);
-          setFeedback('¡Tiempo agotado!');
-          update(ref(realtimeDb, `games/${code}/players/${auth.currentUser.uid}`), {
-            answered: true
-          });
-          return 0;
-        }
-        return prev - 1;
-      });
-    }, 1000);
-
-    return () => clearInterval(timer);
-  }, [timerActive, timeLeft, code]);
-
-  const giveReward = async () => {
     try {
-      const userRef = doc(db, 'users', auth.currentUser.uid);
-      await updateDoc(userRef, { money: increment(10) });
-
-      update(ref(realtimeDb, `games/${code}/players/${auth.currentUser.uid}`), {
-        rewardGiven: true
+      await set(ref(realtimeDb, `games/${newCode}`), {
+        title,
+        creator: auth.currentUser.uid,
+        creatorEmail: auth.currentUser.email,
+        questions,
+        createdAt: Date.now(),
+        players: {},
+        currentQuestion: -1,
+        started: false,
+        ended: false
       });
 
-      setFeedback('¡+10 monedas por completar el quiz! 🎉');
+      setCode(newCode);
+      alert(`¡Quiz creado correctamente!\nCódigo: ${newCode}`);
     } catch (err) {
-      setFeedback('Error al recibir recompensa');
+      console.error(err);
+      setError('Error al guardar el quiz: ' + err.message);
+    } finally {
+      setLoading(false);
     }
   };
 
-  const handleAnswer = (optionIndex) => {
-    if (selectedOption !== null || timeLeft <= 0) return;
+  return (
+    <div style={{
+      minHeight: '100vh',
+      background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+      padding: '40px 20px',
+      color: '#fff'
+    }}>
+      <div style={{
+        maxWidth: '900px',
+        margin: '0 auto',
+        background: 'rgba(255,255,255,0.95)',
+        borderRadius: '16px',
+        padding: '40px',
+        boxShadow: '0 10px 30px rgba(0,0,0,0.2)',
+        color: '#333'
+      }}>
+        <h1 style={{ textAlign: 'center', marginBottom: '40px', color: '#2c3e50' }}>
+          Crear Nuevo Quiz
+        </h1>
 
-    setSelectedOption(optionIndex);
-
-    const question = game.questions[currentQuestionIndex];
-    const isCorrect = optionIndex === question.correct;
-
-    update(ref(realtimeDb, `games/${code}/players/${auth.currentUser.uid}`), {
-      score: increment(isCorrect ? 10 : 0),
-      answered: true,
-      lastAnswerCorrect: isCorrect
-    });
-
-    setFeedback(isCorrect ? '¡Correcto! +10 puntos' : 'Incorrecto...');
-  };
-
-  if (loading) return <div style={{ padding: '100px', textAlign: 'center' }}>Cargando quiz...</div>;
-  if (error) return <div style={{ padding: '100px', textAlign: 'center', color: 'red' }}>{error}</div>;
-
-  if (currentQuestionIndex === -1) {
-    return <div style={{ padding: '100px', textAlign: 'center' }}>Esperando a que el host inicie el quiz...</div>;
-  }
-
-  if (currentQuestionIndex >= game.questions.length || game.ended) {
-    const leaderboard = Object.entries(game.players || {})
-      .map(([uid, p]) => ({ uid, email: p.email || 'Anónimo', score: p.score || 0 }))
-      .sort((a, b) => b.score - a.score);
-
-    return (
-      <div style={{ padding: '60px 20px', maxWidth: '800px', margin: '0 auto', textAlign: 'center' }}>
-        <h1 style={{ marginBottom: '40px', color: '#2c3e50' }}>¡Quiz terminado!</h1>
-
-        <p style={{ fontSize: '1.6rem', marginBottom: '30px' }}>
-          Tu puntuación final: <strong>{playerData?.score || 0} puntos</strong>
-        </p>
-
-        <p style={{ color: '#27ae60', fontSize: '1.4rem', marginBottom: '50px' }}>
-          {feedback || '¡Buen trabajo!'}
-        </p>
-
-        <h2 style={{ marginBottom: '25px', fontSize: '1.8rem' }}>Clasificación</h2>
-
-        {leaderboard.length > 0 ? (
-          <div style={{ 
-            background: '#f8f9fa', 
-            borderRadius: '12px', 
-            padding: '20px', 
-            boxShadow: '0 8px 25px rgba(0,0,0,0.1)',
-            overflowX: 'auto'
+        {error && (
+          <div style={{
+            background: '#ffebee',
+            color: '#c62828',
+            padding: '12px',
+            borderRadius: '8px',
+            marginBottom: '20px',
+            textAlign: 'center'
           }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-              <thead>
-                <tr style={{ background: '#e9ecef' }}>
-                  <th style={{ padding: '15px', textAlign: 'left' }}>Posición</th>
-                  <th style={{ padding: '15px', textAlign: 'left' }}>Jugador</th>
-                  <th style={{ padding: '15px', textAlign: 'right' }}>Puntos</th>
-                </tr>
-              </thead>
-              <tbody>
-                {leaderboard.map((player, index) => (
-                  <tr 
-                    key={player.uid}
-                    style={{ 
-                      borderBottom: '1px solid #dee2e6',
-                      background: player.uid === auth.currentUser.uid ? '#d4edda' : 'transparent'
-                    }}
-                  >
-                    <td style={{ padding: '15px', fontWeight: 'bold' }}>{index + 1}°</td>
-                    <td style={{ padding: '15px' }}>
-                      {player.email.split('@')[0]}{player.uid === auth.currentUser.uid && ' (tú)'}
-                    </td>
-                    <td style={{ padding: '15px', textAlign: 'right', fontWeight: 'bold' }}>
-                      {player.score}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+            {error}
           </div>
-        ) : (
-          <p>No hay jugadores aún.</p>
         )}
 
-        <button
-          onClick={() => router.push('/dashboard')}
+        <input
+          type="text"
+          placeholder="Título del Quiz"
+          value={title}
+          onChange={e => setTitle(e.target.value)}
           style={{
-            marginTop: '50px',
-            padding: '15px 40px',
-            fontSize: '1.2rem',
-            background: '#3498db',
-            color: 'white',
-            border: 'none',
+            width: '100%',
+            padding: '16px',
+            fontSize: '1.3rem',
+            border: '2px solid #ddd',
             borderRadius: '12px',
-            cursor: 'pointer',
-            boxShadow: '0 5px 15px rgba(0,0,0,0.2)'
+            marginBottom: '30px'
           }}
-        >
-          Volver al menú
-        </button>
-      </div>
-    );
-  }
+        />
 
-  const question = game.questions[currentQuestionIndex];
+        {questions.map((q, qIndex) => (
+          <div key={qIndex} style={{
+            background: '#f8f9fa',
+            padding: '24px',
+            borderRadius: '12px',
+            marginBottom: '30px',
+            border: '1px solid #e0e0e0'
+          }}>
+            <input
+              placeholder={`Pregunta ${qIndex + 1}`}
+              value={q.question}
+              onChange={e => updateQuestion(qIndex, 'question', e.target.value)}
+              style={{
+                width: '100%',
+                padding: '14px',
+                fontSize: '1.1rem',
+                border: '1px solid #ccc',
+                borderRadius: '10px',
+                marginBottom: '20px'
+              }}
+            />
 
-  return (
-    <div style={{ padding: '40px 20px', maxWidth: '900px', margin: '0 auto' }}>
-      {/* Personaje */}
-      <div style={{ textAlign: 'center', marginBottom: '30px' }}>
-        <p style={{ fontSize: '1.4rem', marginBottom: '12px' }}>
-          Jugando como: <strong>{playerCharacter}</strong>
-        </p>
-        <div style={{
-          width: '100px',
-          height: '100px',
-          background: '#ccc',
-          borderRadius: '50%',
-          margin: '0 auto 20px',
-          border: '4px solid #3498db',
-          boxShadow: '0 5px 15px rgba(0,0,0,0.2)'
-        }} />
-        <p style={{ fontSize: '1.2rem' }}>
-          Puntuación actual: <strong>{playerData?.score || 0}</strong>
-        </p>
-      </div>
+            {q.options.map((opt, oIndex) => (
+              <div key={oIndex} style={{
+                display: 'flex',
+                alignItems: 'center',
+                marginBottom: '12px'
+              }}>
+                <input
+                  placeholder={`Opción ${oIndex + 1}`}
+                  value={opt}
+                  onChange={e => updateQuestion(qIndex, null, e.target.value, oIndex)}
+                  style={{
+                    flex: 1,
+                    padding: '12px',
+                    fontSize: '1rem',
+                    border: '1px solid #ccc',
+                    borderRadius: '10px',
+                    marginRight: '12px'
+                  }}
+                />
+                <input
+                  type="radio"
+                  name={`correct-${qIndex}`}
+                  checked={q.correct === oIndex}
+                  onChange={() => updateQuestion(qIndex, 'correct', oIndex)}
+                  style={{ width: '20px', height: '20px' }}
+                />
+              </div>
+            ))}
+          </div>
+        ))}
 
-      {/* Timer */}
-      <div style={{ marginBottom: '30px' }}>
-        <div style={{
-          height: '12px',
-          background: '#e9ecef',
-          borderRadius: '6px',
-          overflow: 'hidden'
-        }}>
-          <div style={{
-            width: `${(timeLeft / TIME_PER_QUESTION) * 100}%`,
-            height: '100%',
-            background: timeLeft > 10 ? '#27ae60' : timeLeft > 5 ? '#f39c12' : '#e74c3c',
-            transition: 'width 1s linear'
-          }} />
-        </div>
-        <p style={{
-          textAlign: 'center',
-          marginTop: '10px',
-          fontSize: '1.3rem',
-          fontWeight: 'bold',
-          color: timeLeft <= 5 ? '#e74c3c' : '#333'
-        }}>
-          Tiempo restante: {timeLeft}s
-        </p>
-      </div>
-
-      <h2 style={{ textAlign: 'center', marginBottom: '20px' }}>
-        Pregunta {currentQuestionIndex + 1} de {game.questions.length}
-      </h2>
-
-      <h3 style={{ textAlign: 'center', marginBottom: '40px', fontSize: '1.5rem' }}>
-        {question.question}
-      </h3>
-
-      <div style={{
-        display: 'grid',
-        gridTemplateColumns: '1fr 1fr',
-        gap: '20px'
-      }}>
-        {question.options.map((opt, index) => (
+        <div style={{ textAlign: 'center', margin: '30px 0' }}>
           <button
-            key={index}
-            onClick={() => handleAnswer(index)}
-            disabled={selectedOption !== null || timeLeft <= 0}
+            onClick={addQuestion}
             style={{
-              padding: '20px',
-              fontSize: '1.2rem',
-              background: selectedOption === index
-                ? (question.correct === index ? '#27ae60' : '#e74c3c')
-                : '#ecf0f1',
-              color: selectedOption === index ? 'white' : '#333',
+              padding: '14px 32px',
+              marginRight: '20px',
+              background: '#7e57c2',
+              color: 'white',
               border: 'none',
               borderRadius: '12px',
-              cursor: selectedOption === null && timeLeft > 0 ? 'pointer' : 'default',
-              transition: 'all 0.3s',
-              boxShadow: '0 4px 12px rgba(0,0,0,0.1)',
-              transform: selectedOption === index ? 'scale(1.05)' : 'scale(1)'
+              fontSize: '1.1rem',
+              cursor: 'pointer'
             }}
           >
-            {opt}
+            + Añadir Pregunta
           </button>
-        ))}
-      </div>
 
-      {feedback && (
-        <p style={{
-          marginTop: '40px',
-          textAlign: 'center',
-          fontSize: '1.6rem',
-          fontWeight: 'bold',
-          color: feedback.includes('Correcto') ? '#27ae60' : '#e74c3c'
-        }}>
-          {feedback}
-        </p>
-      )}
+          <button
+            onClick={saveQuiz}
+            disabled={loading}
+            style={{
+              padding: '14px 40px',
+              background: loading ? '#ccc' : '#4caf50',
+              color: 'white',
+              border: 'none',
+              borderRadius: '12px',
+              fontSize: '1.1rem',
+              cursor: loading ? 'not-allowed' : 'pointer'
+            }}
+          >
+            {loading ? 'Guardando...' : 'Crear Quiz'}
+          </button>
+        </div>
+
+        {code && (
+          <div style={{
+            marginTop: '50px',
+            padding: '30px',
+            background: '#e8f5e9',
+            borderRadius: '16px',
+            textAlign: 'center'
+          }}>
+            <h2 style={{ color: '#2e7d32', marginBottom: '20px' }}>
+              ¡Quiz creado con éxito!
+            </h2>
+            <p style={{ fontSize: '1.4rem', marginBottom: '15px' }}>
+              Código para compartir: <strong style={{ fontSize: '2rem', color: '#c62828' }}>{code}</strong>
+            </p>
+            <QRCode value={`http://localhost:3000/join-quiz?code=${code}`} size={220} />
+            <p style={{ marginTop: '20px', color: '#555' }}>
+              Los jugadores pueden unirse escaneando el QR o usando el código directamente.
+            </p>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
