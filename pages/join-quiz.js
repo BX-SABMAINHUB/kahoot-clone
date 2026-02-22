@@ -1,4 +1,3 @@
-// pages/join-quiz.js
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/router';
 import { auth, realtimeDb } from '../firebase';
@@ -35,6 +34,7 @@ export default function JoinQuiz() {
         answered: false,
         joinedAt: Date.now()
       }).then(() => {
+        // Redirección a play/[code]
         router.push(`/play/${gameCode}`);
       }).catch(err => {
         setError('Error al unirse: ' + err.message);
@@ -49,7 +49,7 @@ export default function JoinQuiz() {
 
       <input
         type="text"
-        placeholder="Código (6 letras/números)"
+        placeholder="Código (6 caracteres)"
         value={code}
         onChange={e => setCode(e.target.value.toUpperCase())}
         maxLength={6}
